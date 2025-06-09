@@ -10,6 +10,7 @@ export interface Event {
 export interface SystemStatus {
   is_running: boolean;
   audio_listening: boolean;
+  audio_input_enabled: boolean;
   voice_dictation_enabled: boolean;
   vision_capturing: boolean;
   camera_capture_enabled: boolean;
@@ -173,7 +174,7 @@ export function useSocket(url: string): UseSocketReturn {
           if (systemStatus) {
             const updatedStatus = {
               ...systemStatus,
-              voice_dictation_enabled: event.data.enabled
+              voice_dictation_enabled: event.data.enabled as boolean
             };
             setSystemStatus(updatedStatus);
           }
@@ -187,7 +188,7 @@ export function useSocket(url: string): UseSocketReturn {
           if (systemStatus) {
             const updatedStatus = {
               ...systemStatus,
-              camera_capture_enabled: event.data.enabled
+              camera_capture_enabled: event.data.enabled as boolean
             };
             setSystemStatus(updatedStatus);
           }
@@ -196,6 +197,26 @@ export function useSocket(url: string): UseSocketReturn {
         
       // Add other event type handlers as needed
       case 'audio_event':
+        // Handle audio input and voice dictation toggle events
+        if (event.action === 'audio_input_toggled') {
+          if (systemStatus) {
+            const updatedStatus = {
+              ...systemStatus,
+              audio_input_enabled: event.data.enabled as boolean
+            };
+            setSystemStatus(updatedStatus);
+          }
+        } else if (event.action === 'voice_dictation_toggled') {
+          if (systemStatus) {
+            const updatedStatus = {
+              ...systemStatus,
+              voice_dictation_enabled: event.data.enabled as boolean
+            };
+            setSystemStatus(updatedStatus);
+          }
+        }
+        // Fall through to handle other audio events via lastEvent
+        break;
       case 'llm_event':
       case 'tts_event':
       case 'vision_event':

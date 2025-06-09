@@ -28,10 +28,11 @@ except ImportError as e:
 
 
 class LLMProcessor:
-    def __init__(self, io_pool: concurrent.futures.ThreadPoolExecutor, tool_registry=None):
+    def __init__(self, io_pool: concurrent.futures.ThreadPoolExecutor, tool_registry=None, audio_processor=None):
         # Dependency injection
         self.io_pool = io_pool
         self.tool_registry = tool_registry
+        self.audio_processor = audio_processor
         
         self.provider: Optional[ModelProvider] = None
         self.is_processing = False
@@ -193,7 +194,7 @@ class LLMProcessor:
         ))
         
         # Start TTS
-        if response_text.strip():
+        if response_text.strip() and self.audio_processor:
             await self._speak_text(response_text)
     
     def _build_messages(self, transcript: str, image_base64: Optional[str]) -> list:
@@ -467,6 +468,11 @@ No other content, punctuation, or chain-of-thought.
     
     async def _speak_text(self, text: str):
         """Convert text to speech using macOS 'say' command"""
+        # Check if TTS is enabled
+        if not self.audio_processor or not self.audio_processor.is_voice_dictation_enabled():
+            logger.debug("Voice dictation disabled, skipping TTS")
+            return
+            
         try:
             await event_bus.publish(Event(
                 type=EventType.TTS_EVENT,

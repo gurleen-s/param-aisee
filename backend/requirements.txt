@@ -13,3 +13,8 @@ webrtcvad
 qwen-vl-utils
 torch
 torchvision
+librosa
+pydub
+pyannote.audio
+datasets
+transformers

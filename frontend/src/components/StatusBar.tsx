@@ -22,6 +22,7 @@ export function StatusBar({
 }: StatusBarProps) {
   const [isToggling, setIsToggling] = useState(false);
   const [isCameraToggling, setIsCameraToggling] = useState(false);
+  const [isAudioToggling, setIsAudioToggling] = useState(false);
 
   const getStatusColor = (status: boolean) => {
     return status ? 'text-green-400' : 'text-gray-500';
@@ -102,6 +103,41 @@ export function StatusBar({
       setIsCameraToggling(false);
     }
   };
+
+  const toggleAudioInput = async () => {
+    if (!systemStatus || isAudioToggling) return;
+    
+    setIsAudioToggling(true);
+    try {
+      const response = await fetch('/api/audio/toggle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          enabled: !systemStatus.audio_input_enabled
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to toggle audio input');
+      }
+      
+      const result = await response.json();
+      
+      // Refresh system status to get updated state
+      if (refreshSystemStatus) {
+        await refreshSystemStatus();
+      }
+      
+    } catch (error) {
+      console.error('Error toggling audio input:', error);
+      // Optionally show user-visible error message
+    } finally {
+      setIsAudioToggling(false);
+    }
+  };
   
   const getLastEventDisplay = () => {
     if (!lastEvent) return { icon: '📡', text: 'No events', color: 'text-gray-400' };
@@ -123,6 +159,16 @@ export function StatusBar({
       'audio_event:raw_transcript': { icon: '📝', text: 'Raw transcript received', color: 'text-gray-400' },
       'audio_event:wake_word_detected': { icon: '🎤', text: 'Wake word detected', color: 'text-orange-400' },
       'audio_event:context_ready': { icon: '📋', text: 'Context ready for AI', color: 'text-purple-400' },
+      'audio_event:audio_input_toggled': { 
+        icon: lastEvent?.data?.enabled ? '🎤' : '🔇', 
+        text: `Audio input ${lastEvent?.data?.enabled ? 'enabled' : 'disabled'}`, 
+        color: lastEvent?.data?.enabled ? 'text-green-400' : 'text-orange-400' 
+      },
+      'audio_event:voice_dictation_toggled': { 
+        icon: lastEvent?.data?.enabled ? '🔊' : '🔇', 
+        text: `Voice dictation ${lastEvent?.data?.enabled ? 'enabled' : 'disabled'}`, 
+        color: lastEvent?.data?.enabled ? 'text-green-400' : 'text-orange-400' 
+      },
       
       // LLM events
       'llm_event:response_start': { icon: '🤖', text: 'AI thinking', color: 'text-cyan-400' },
@@ -224,6 +270,31 @@ export function StatusBar({
                   <span className="text-xs font-medium">
                     {systemStatus.audio_listening ? 'Active' : 'Inactive'}
                   </span>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-between p-2 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                <span className="text-xs text-gray-300 font-medium">Audio Input</span>
+                <div className="flex items-center space-x-2">
+                  <div className={getStatusClasses(systemStatus.audio_input_enabled)}>
+                    <span className="text-xs font-medium">
+                      {systemStatus.audio_input_enabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleAudioInput}
+                    disabled={!isConnected || isAudioToggling}
+                    className={`
+                      px-2 py-1 text-xs rounded-md font-medium transition-colors
+                      ${systemStatus.audio_input_enabled 
+                        ? 'bg-orange-600 hover:bg-orange-500 text-white' 
+                        : 'bg-green-600 hover:bg-green-500 text-white'
+                      }
+                      ${(!isConnected || isAudioToggling) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                    `}
+                  >
+                    {isAudioToggling ? '...' : (systemStatus.audio_input_enabled ? 'Disable' : 'Enable')}
+                  </button>
                 </div>
               </div>
               

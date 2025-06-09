@@ -34,6 +34,8 @@ class TaskManager:
                 "raw_transcript": self._handle_audio_raw_transcript,
                 "wake_word_detected": self._handle_audio_wake_word,
                 "context_ready": self._handle_audio_context_ready,
+                "voice_dictation_toggled": self._handle_voice_dictation_toggled,
+                "audio_input_toggled": self._handle_audio_input_toggled,
             },
             EventType.LLM_EVENT: {
                 "response_start": self._handle_llm_start,
@@ -54,9 +56,6 @@ class TaskManager:
                 "video_complete": self._handle_video_complete,
                 "recording_start": self._handle_recording_start,
                 "recording_complete": self._handle_recording_complete,
-            },
-            EventType.VOICE_CONTROL: {
-                "dictation_toggled": self._handle_voice_dictation_toggled,
             },
             EventType.CAMERA_CONTROL: {
                 "capture_toggled": self._handle_camera_capture_toggled,
@@ -314,10 +313,16 @@ class TaskManager:
     
     # Voice control handlers
     async def _handle_voice_dictation_toggled(self, event: Event):
-        """Handle voice dictation toggle"""
+        """Handle voice dictation (TTS output) toggle"""
+        enabled = event.data.get("enabled", False)
+        status = "🔊" if enabled else "🔇"
+        logger.info(f"{status} Voice dictation (TTS) {'enabled' if enabled else 'disabled'}")
+    
+    async def _handle_audio_input_toggled(self, event: Event):
+        """Handle audio input (microphone) toggle"""
         enabled = event.data.get("enabled", False)
         status = "🎤" if enabled else "🔇"
-        logger.info(f"{status} Voice dictation {'enabled' if enabled else 'disabled'}")
+        logger.info(f"{status} Audio input {'enabled' if enabled else 'disabled'}")
     
     # Camera control handlers
     async def _handle_camera_capture_toggled(self, event: Event):
@@ -338,6 +343,7 @@ class TaskManager:
         return {
             "is_running": self.is_running,
             "audio_listening": self.audio_processor.is_listening if self.audio_processor else False,
+            "audio_input_enabled": self.audio_processor.is_audio_input_enabled() if self.audio_processor else False,
             "voice_dictation_enabled": self.audio_processor.is_voice_dictation_enabled() if self.audio_processor else False,
             "vision_capturing": self.vision_processor.is_capturing if self.vision_processor else False,
             "camera_capture_enabled": self.vision_processor.is_camera_capture_enabled() if self.vision_processor else False,

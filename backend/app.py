@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -8,6 +8,8 @@ import uvicorn
 from contextlib import asynccontextmanager
 import sounddevice as sd
 import cv2
+import tempfile
+import os
 
 from .config import settings
 from .events import event_bus, Event, EventType
@@ -110,16 +112,30 @@ class VoiceDictationToggleRequest(BaseModel):
     enabled: bool
 
 
+class AudioInputToggleRequest(BaseModel):
+    enabled: bool
+
+
 class CameraCaptureToggleRequest(BaseModel):
     enabled: bool
 
 
 @app.post("/voice/toggle")
 async def toggle_voice_dictation(request: VoiceDictationToggleRequest):
-    """Toggle voice dictation on/off"""
+    """Toggle voice dictation (TTS output) on/off"""
     await container.audio_processor.set_voice_dictation_enabled(request.enabled)
     return {
-        "message": f"Voice dictation {'enabled' if request.enabled else 'disabled'}",
+        "message": f"Voice dictation (TTS) {'enabled' if request.enabled else 'disabled'}",
+        "enabled": request.enabled
+    }
+
+
+@app.post("/audio/toggle")
+async def toggle_audio_input(request: AudioInputToggleRequest):
+    """Toggle audio input processing (microphone listening) on/off"""
+    await container.audio_processor.set_audio_input_enabled(request.enabled)
+    return {
+        "message": f"Audio input {'enabled' if request.enabled else 'disabled'}",
         "enabled": request.enabled
     }
 
@@ -209,6 +225,20 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 # Get event from queue (with timeout to check WebSocket)
                 event = await asyncio.wait_for(event_queue.get(), timeout=1.0)
+                
+                # Capture transcript events for meeting storage
+                if (event.type == EventType.AUDIO_EVENT and 
+                    event.action in ["raw_transcript", "utterance_ready"] and 
+                    event.data and event.data.get("transcript")):
+                    
+                    from datetime import datetime
+                    transcript_entry = {
+                        "timestamp": datetime.now().isoformat(),
+                        "content": event.data["transcript"],
+                        "type": event.action,
+                        "source": "continuous_mode" if event.action == "utterance_ready" else "normal"
+                    }
+                    meeting_transcripts.append(transcript_entry)
                 
                 # Send event to client
                 await websocket.send_json({
@@ -503,6 +533,167 @@ async def update_device(request: DeviceUpdateRequest):
     except Exception as e:
         logger.error(f"Error updating device: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Meeting Simulation Endpoints
+
+class MeetingPlaybackRequest(BaseModel):
+    speed: float = 1.0
+
+
+class MeetingNameRequest(BaseModel):
+    name: str
+
+
+@app.post("/meeting/upload")
+async def upload_meeting_audio(file: UploadFile = File(...), name: str = None):
+    """Upload and process meeting audio file"""
+    # Validate file type
+    allowed_types = [
+        "audio/wav", "audio/x-wav", 
+        "audio/mpeg", "audio/mp3",
+        "audio/mp4", "audio/m4a", "audio/x-m4a"
+    ]
+    
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Unsupported file type: {file.content_type}. Supported types: {', '.join(allowed_types)}"
+        )
+    
+    # Create temporary file
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
+            content = await file.read()
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+        
+        # Process the meeting audio
+        meeting_name = name or file.filename
+        result = await container.meeting_simulator.upload_meeting_audio(
+            temp_file_path, 
+            meeting_name
+        )
+        
+        # Clean up temporary file
+        try:
+            os.unlink(temp_file_path)
+        except:
+            pass
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error processing meeting upload: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process meeting: {str(e)}")
+
+
+@app.post("/meeting/playback/start")
+async def start_meeting_playback(request: MeetingPlaybackRequest):
+    """Start simulated real-time meeting playback"""
+    if not (0.5 <= request.speed <= 3.0):
+        raise HTTPException(status_code=400, detail="Playback speed must be between 0.5x and 3.0x")
+    
+    try:
+        result = await container.meeting_simulator.start_meeting_playback(request.speed)
+        return result
+    except Exception as e:
+        logger.error(f"Error starting meeting playback: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start playback: {str(e)}")
+
+
+@app.post("/meeting/playback/stop")
+async def stop_meeting_playback():
+    """Stop meeting playback"""
+    try:
+        result = await container.meeting_simulator.stop_meeting_playback()
+        return result
+    except Exception as e:
+        logger.error(f"Error stopping meeting playback: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to stop playback: {str(e)}")
+
+
+@app.get("/meeting/status")
+async def get_meeting_status():
+    """Get current meeting and playback status"""
+    try:
+        status = container.meeting_simulator.get_current_status()
+        return status
+    except Exception as e:
+        logger.error(f"Error getting meeting status: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get meeting status: {str(e)}")
+
+
+@app.post("/meeting/playback/speed")
+async def adjust_playback_speed(request: MeetingPlaybackRequest):
+    """Adjust playback speed during meeting playback"""
+    if not (0.5 <= request.speed <= 3.0):
+        raise HTTPException(status_code=400, detail="Playback speed must be between 0.5x and 3.0x")
+    
+    try:
+        # Update playback speed
+        container.meeting_simulator.playback_speed = request.speed
+        
+        await event_bus.publish(Event(
+            type=EventType.MEETING_EVENT,
+            action="playback_speed_changed",
+            data={"speed": request.speed}
+        ))
+        
+        return {"success": True, "speed": request.speed, "message": f"Playback speed set to {request.speed}x"}
+    except Exception as e:
+        logger.error(f"Error adjusting playback speed: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to adjust speed: {str(e)}")
+
+
+# Meeting transcript storage
+meeting_transcripts = []
+
+@app.get("/meeting/transcripts")
+async def get_meeting_transcripts():
+    """Get all transcripts from current session"""
+    return {
+        "transcripts": meeting_transcripts,
+        "total_count": len(meeting_transcripts),
+        "session_start": meeting_transcripts[0]["timestamp"] if meeting_transcripts else None,
+        "session_end": meeting_transcripts[-1]["timestamp"] if meeting_transcripts else None
+    }
+
+@app.post("/meeting/transcripts/clear")
+async def clear_meeting_transcripts():
+    """Clear all meeting transcripts"""
+    global meeting_transcripts
+    meeting_transcripts.clear()
+    return {"message": "Transcripts cleared", "count": 0}
+
+@app.post("/meeting/transcripts/save")
+async def save_meeting_transcripts(name: str = "Doctor Meeting"):
+    """Save current meeting transcripts to file"""
+    if not meeting_transcripts:
+        raise HTTPException(status_code=400, detail="No transcripts to save")
+    
+    import json
+    from datetime import datetime
+    
+    filename = f"meeting_transcript_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    filepath = f"backend/recordings/{filename}"
+    
+    meeting_data = {
+        "meeting_name": name,
+        "created_at": datetime.now().isoformat(),
+        "transcript_count": len(meeting_transcripts),
+        "transcripts": meeting_transcripts
+    }
+    
+    with open(filepath, 'w') as f:
+        json.dump(meeting_data, f, indent=2, default=str)
+    
+    return {
+        "message": "Meeting transcripts saved",
+        "filename": filename,
+        "filepath": filepath,
+        "transcript_count": len(meeting_transcripts)
+    }
 
 
 if __name__ == "__main__":

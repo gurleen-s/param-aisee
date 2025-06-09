@@ -48,8 +48,9 @@ export function DebugStream({ lastEvent, className = '' }: DebugStreamProps) {
             break;
             
           case 'raw_transcript':
-            const rawTranscript = lastEvent.data?.transcript;
-            if (rawTranscript && rawTranscript.trim()) {
+          case 'utterance_ready':
+            const rawTranscript = lastEvent.data?.transcript as string;
+            if (rawTranscript && typeof rawTranscript === 'string' && rawTranscript.trim()) {
               const hasWakeWord = containsWakeWord(rawTranscript);
               const newRawTranscript: RawTranscript = {
                 id: Date.now().toString(),
@@ -61,8 +62,8 @@ export function DebugStream({ lastEvent, className = '' }: DebugStreamProps) {
               };
               setRawTranscripts(prev => {
                 const updated = [...prev, newRawTranscript];
-                // Keep only last 30 transcripts
-                return updated.slice(-30);
+                // Keep only last 50 transcripts (increased for continuous mode)
+                return updated.slice(-50);
               });
             }
             break;
@@ -84,10 +85,22 @@ export function DebugStream({ lastEvent, className = '' }: DebugStreamProps) {
             isInContextMode.current = false;
             isTranscribing.current = false;
             break;
+            
+          case 'continuous_mode_enabled':
+            // Clear existing transcripts when entering continuous mode
+            setRawTranscripts([]);
+            break;
         }
         break;
     }
   }, [lastEvent]);
+  
+  // Auto-scroll to bottom when new transcripts are added
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
+  }, [rawTranscripts]);
   
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });

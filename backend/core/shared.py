@@ -51,6 +51,7 @@ class DependencyContainer:
         self._tool_registry = None
         self._llm_processor = None
         self._task_manager = None
+        self._meeting_simulator = None
     
     async def initialize(self):
         """Initialize all dependencies"""
@@ -63,6 +64,7 @@ class DependencyContainer:
         from .tools import ToolRegistry
         from .llm import LLMProcessor
         from .tasks import TaskManager
+        from .meeting_simulator import MeetingSimulator
         
         # Create instances with dependencies
         self._audio_processor = AudioProcessor(
@@ -81,10 +83,17 @@ class DependencyContainer:
             video_recorder=self._video_recorder
         )
         
-        # LLM processor now includes tool registry
+        # LLM processor now includes tool registry and audio processor
         self._llm_processor = LLMProcessor(
             io_pool=self.shared.io_pool,
-            tool_registry=self._tool_registry
+            tool_registry=self._tool_registry,
+            audio_processor=self._audio_processor
+        )
+        
+        # Meeting simulator depends on io_pool and audio processor
+        self._meeting_simulator = MeetingSimulator(
+            io_pool=self.shared.io_pool,
+            audio_processor=self._audio_processor
         )
         
         self._task_manager = TaskManager(
@@ -127,6 +136,10 @@ class DependencyContainer:
     @property
     def task_manager(self):
         return self._task_manager
+    
+    @property
+    def meeting_simulator(self):
+        return self._meeting_simulator
 
 
 # Global container instance

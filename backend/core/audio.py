@@ -23,51 +23,59 @@ class AudioProcessor:
         self.cpu_pool = cpu_pool
         self.loop = loop
         
-        # State management
+        # Audio settings
+        self.sample_rate = settings.audio_sample_rate
+        self.frame_size = 480  # 30ms frames at 16kHz
+        self.device_index = settings.audio_device_index
+        
+        # Separate controls for input and output
+        self.audio_input_enabled = True  # Controls microphone listening/transcription
+        self.voice_dictation_enabled = False  # Controls TTS output only
+        
+        # Audio processing state
         self.is_listening = False
-        self.is_transcribing = False
-        self.is_recording = False
+        self.audio_stream = None
+        self.audio_queue = asyncio.Queue(maxsize=100)
         
-        # Voice dictation control
-        self.voice_dictation_enabled = True  # Default to enabled
-        
-        # VAD state management
-        self.vad_state = "IDLE"  # IDLE, SPEAKING, SILENCE_DETECTED
-        self.speech_frames = []  # Accumulated speech frames
+        # VAD (Voice Activity Detection)
+        self.vad = webrtcvad.Vad(2)  # Aggressiveness level (0-3)
+        self.vad_state = "IDLE"
+        self.speech_frames = []
         self.silence_frame_count = 0
         self.speech_frame_count = 0
+        self.speech_threshold = 15  # ~500ms at 30ms frames
+        self.silence_threshold_frames = 30  # ~1s at 30ms frames
+        self.min_speech_duration_frames = 5  # ~150ms minimum
         
-        # Context accumulation state
-        self.context_mode = False  # Whether we're accumulating context after wake word
-        self.context_buffer: List[str] = []  # Accumulated context after wake word
-        self.last_speech_time = 0  # Track when last speech was detected
+        # Whisper transcription
+        self.whisper_model_path = "mlx-community/whisper-tiny"
+        self.whisper_model_loaded = False
+        self.is_transcribing = False
+        
+        # Wake word detection
+        self.wake_words = ["osmo", "hey osmo", "hey"]
+        
+        # Context accumulation mode
+        self.context_mode = False
+        self.context_buffer = []
+        self.last_speech_time = 0
+        
+        # Context accumulation settings
+        self.silence_threshold = 2.0  # 2 seconds of silence to end context
+        
+        # Continuous processing mode (for meeting simulation)
+        self.continuous_mode = False
+        self.utterance_silence_threshold = 15  # ~500ms at 30ms frames
+        
+        # State management
+        self.is_recording = False
         
         # Audio buffers
         self.audio_buffer = deque(maxlen=settings.audio_sample_rate * 5)  # 5 seconds buffer
         
-        # MLX Whisper model configuration
-        self.whisper_model_path = "mlx-community/whisper-large-v3-turbo"
-        self.whisper_model_loaded = False
-        
-        # VAD configuration
-        self.vad = webrtcvad.Vad(settings.vad_aggressiveness)  # Use configurable aggressiveness
-        self.frame_duration_ms = 30  # 30ms frames for VAD
-        self.frame_size = int(settings.audio_sample_rate * self.frame_duration_ms / 1000)
-        
-        # VAD thresholds
-        self.speech_threshold = 3  # Frames of speech to trigger recording
-        self.silence_threshold_frames = 40  # Frames of silence to end recording (~1.2 seconds)
-        self.min_speech_duration_frames = 10  # Minimum speech duration to transcribe
-        
         # Threading
         self.audio_thread: Optional[threading.Thread] = None
         self.should_stop = False
-        
-        # Wake word keywords (case-insensitive)
-        self.wake_words = ["hey", "osmo", "hey osmo", "chat", "hey chat", "hey aisee"]
-        
-        # Context accumulation settings
-        self.silence_threshold = 2.0  # 2 seconds of silence to end context
     
     async def initialize(self):
         """Initialize the audio processor"""
@@ -197,8 +205,8 @@ class AudioProcessor:
 
     async def _process_vad_frame(self, audio_frame: np.ndarray):
         """Process audio frame through VAD state machine"""
-        # Skip processing if voice dictation is disabled
-        if not self.voice_dictation_enabled:
+        # Skip processing if audio input is disabled
+        if not self.audio_input_enabled:
             return
             
         # Ensure frame is the right size for VAD
@@ -241,8 +249,16 @@ class AudioProcessor:
                     if self.silence_frame_count <= 10:  # Add up to 300ms of silence
                         self.speech_frames.extend(audio_frame)
                     
+                    # Use different thresholds for continuous mode vs normal mode
+                    if self.continuous_mode:
+                        # Shorter threshold for utterance detection (500ms)
+                        silence_threshold = self.utterance_silence_threshold
+                    else:
+                        # Normal threshold for wake word mode
+                        silence_threshold = self.silence_threshold_frames
+                    
                     # Check if we've had enough silence to end recording
-                    if self.silence_frame_count >= self.silence_threshold_frames:
+                    if self.silence_frame_count >= silence_threshold:
                         self.vad_state = "SILENCE_DETECTED"
                         logger.debug("VAD: Silence detected, ending speech")
                         
@@ -262,15 +278,14 @@ class AudioProcessor:
         except Exception as e:
             logger.error(f"VAD processing error: {e}")
 
-        # ---- New check for context finalization due to silence ----
+        # ---- Context finalization for normal mode ----
         # This check runs after each VAD frame processing attempt.
-        # It relies on self.last_speech_time being updated by _handle_transcript.
-        if self.context_mode and self.context_buffer: # Only finalize if in context mode and buffer has content
+        # Only applies to normal (non-continuous) mode
+        if not self.continuous_mode and self.context_mode and self.context_buffer:
             current_frame_time = time.time()
             if (current_frame_time - self.last_speech_time) > self.silence_threshold:
                 logger.info(f"Context silence timer ({self.silence_threshold}s) expired in _process_vad_frame. Finalizing context.")
                 await self._finalize_context()
-                # _finalize_context will reset self.context_mode, preventing re-triggering if _process_vad_frame is called again quickly.
 
     async def _process_speech_segment(self):
         """Process accumulated speech segment"""
@@ -358,7 +373,20 @@ class AudioProcessor:
         current_time = time.time()
         transcript_lower = transcript.lower() # For checking "enter"
         
-        # Check for wake word
+        # Handle continuous mode differently
+        if self.continuous_mode:
+            # In continuous mode, publish every utterance directly
+            logger.info(f"Continuous mode utterance: {transcript}")
+            
+            await event_bus.publish(Event(
+                type=EventType.AUDIO_EVENT,
+                action="utterance_ready",
+                data={"transcript": transcript, "timestamp": current_time}
+            ))
+            
+            return
+        
+        # Normal mode: Check for wake word
         if self._contains_wake_word(transcript): # Pass original transcript for wake word check
             logger.info(f"Wake word detected: {transcript}")
             
@@ -430,27 +458,63 @@ class AudioProcessor:
         return any(wake_word in transcript_lower for wake_word in self.wake_words)
 
     async def set_voice_dictation_enabled(self, enabled: bool):
-        """Enable or disable voice dictation"""
-        if self.voice_dictation_enabled == enabled:
-            return  # No change needed
-        
+        """Enable/disable voice dictation (TTS output only)"""
         self.voice_dictation_enabled = enabled
+        logger.info(f"Voice dictation (TTS) {'enabled' if enabled else 'disabled'}")
         
-        # Reset VAD state when toggling
-        self._reset_vad_state()
-        
-        # Publish voice control event
         await event_bus.publish(Event(
-            type=EventType.VOICE_CONTROL,
-            action="dictation_toggled",
-            data={"enabled": enabled}
+            type=EventType.AUDIO_EVENT,
+            action="voice_dictation_toggled",
+            data={
+                "enabled": enabled,
+                "message": f"Voice dictation (TTS) {'enabled' if enabled else 'disabled'}"
+            }
         ))
+
+    async def set_audio_input_enabled(self, enabled: bool):
+        """Enable/disable audio input processing (microphone listening/transcription)"""
+        self.audio_input_enabled = enabled
+        logger.info(f"Audio input {'enabled' if enabled else 'disabled'}")
         
-        logger.info(f"Voice dictation {'enabled' if enabled else 'disabled'}")
+        await event_bus.publish(Event(
+            type=EventType.AUDIO_EVENT,
+            action="audio_input_toggled",
+            data={
+                "enabled": enabled,
+                "message": f"Audio input {'enabled' if enabled else 'disabled'}"
+            }
+        ))
 
     def is_voice_dictation_enabled(self) -> bool:
-        """Check if voice dictation is enabled"""
+        """Check if voice dictation (TTS) is enabled"""
         return self.voice_dictation_enabled
+    
+    def is_audio_input_enabled(self) -> bool:
+        """Check if audio input processing is enabled"""
+        return self.audio_input_enabled
+    
+    async def enable_continuous_mode(self):
+        """Switch to continuous processing for meeting playback"""
+        self.continuous_mode = True
+        self.context_mode = False  # Disable wake word context mode
+        logger.info("🎧 Continuous processing mode enabled")
+        
+        await event_bus.publish(Event(
+            type=EventType.AUDIO_EVENT,
+            action="continuous_mode_enabled",
+            data={"message": "Continuous processing active"}
+        ))
+    
+    async def disable_continuous_mode(self):
+        """Disable continuous processing mode"""
+        self.continuous_mode = False
+        logger.info("🎧 Continuous processing mode disabled")
+        
+        await event_bus.publish(Event(
+            type=EventType.AUDIO_EVENT,
+            action="continuous_mode_disabled",
+            data={"message": "Continuous processing deactivated"}
+        ))
 
 
 # Remove global instance - now handled by dependency injection

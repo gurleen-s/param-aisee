@@ -15,6 +15,7 @@ class EventType(Enum):
     TOOL_EVENT = "tool_event"             # Tool execution events
     VOICE_CONTROL = "voice_control"       # Voice dictation control events
     CAMERA_CONTROL = "camera_control"     # Camera capture control events
+    MEETING_EVENT = "meeting_event"       # Meeting simulation events
     ERROR = "error"                       
 
 
