@@ -9,12 +9,11 @@ import concurrent.futures
 import numpy as np
 from PIL import Image
 from io import BytesIO
-from openai import AsyncOpenAI
-import os
 
 from ..config import settings
 from ..events import Event, EventType, event_bus
 from .conversation import conversation_storage
+from .model_providers import create_provider, ModelProvider
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ class LLMProcessor:
         self.io_pool = io_pool
         self.tool_registry = tool_registry
         
-        self.client: Optional[AsyncOpenAI] = None
+        self.provider: Optional[ModelProvider] = None
         self.is_processing = False
         
         # TTS state
@@ -46,19 +45,24 @@ class LLMProcessor:
         self.circuit_open_until = 0
         
     async def start(self):
-        """Initialize the LLM processor"""
-        if self.client is None:
-            self.client = AsyncOpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=settings.openrouter_api_key,
-            )
-        logger.info("LLM processor started with OpenAI client")
+        """Initialize the LLM processor with the configured provider"""
+        if self.provider is None:
+            try:
+                self.provider = create_provider(
+                    provider_name=settings.model_provider,
+                    api_key=settings.current_api_key,
+                    model=settings.current_model
+                )
+                logger.info(f"LLM processor started with {settings.model_provider} provider")
+            except Exception as e:
+                logger.error(f"Failed to initialize model provider: {e}")
+                raise
     
     async def stop(self):
         """Stop the LLM processor"""
-        if self.client:
-            await self.client.close()
-            self.client = None
+        if self.provider:
+            await self.provider.close()
+            self.provider = None
         
         # Stop any running TTS
         if self.tts_process:
@@ -372,9 +376,9 @@ No other content, punctuation, or chain-of-thought.
         return messages
     
     async def _call_llm_api(self, messages: list) -> AsyncGenerator[str, None]:
-        """Call OpenRouter API using OpenAI client and stream response with timeout and circuit breaker"""
-        if not self.client:
-            raise Exception("LLM client not initialized")
+        """Call LLM API using the configured provider and stream response with timeout and circuit breaker"""
+        if not self.provider:
+            raise Exception("LLM provider not initialized")
         
         # Circuit breaker check
         import time
@@ -386,7 +390,7 @@ No other content, punctuation, or chain-of-thought.
         try:
             # Debug logging for API call
             logger.info(f"Calling LLM API with {len(messages)} messages")
-            logger.info(f"Model: {settings.openrouter_model}")
+            logger.info(f"Provider: {settings.model_provider}, Model: {settings.current_model}")
             
             # Calculate total payload size for safety
             total_payload_size = 0
@@ -423,17 +427,13 @@ No other content, punctuation, or chain-of-thought.
             
             # Add timeout to the API call
             try:
-                stream = await asyncio.wait_for(
-                    self.client.chat.completions.create(
-                model=settings.openrouter_model,
-                messages=messages,
-                max_tokens=settings.max_tokens,
-                temperature=settings.temperature,
-                stream=True,
-                extra_headers={
-                    "HTTP-Referer": "http://localhost:3000",
-                    "X-Title": "Osmo Assistant"
-                }
+                # Use the provider's create_chat_completion method
+                stream_generator = await asyncio.wait_for(
+                    self.provider.create_chat_completion(
+                        messages=messages,
+                        stream=True,
+                        max_tokens=settings.max_tokens,
+                        temperature=settings.temperature
                     ),
                     timeout=30.0  # 30 second timeout
                 )
@@ -447,9 +447,8 @@ No other content, punctuation, or chain-of-thought.
             self.api_failure_count = 0
             
             # Stream the response chunks
-            async for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    yield chunk.choices[0].delta.content
+            async for chunk in stream_generator:
+                yield chunk
                     
         except Exception as e:
             # Update circuit breaker on failure
@@ -458,7 +457,7 @@ No other content, punctuation, or chain-of-thought.
                 self.circuit_open_until = time.time() + 60  # Open for 60 seconds
                 logger.error(f"Circuit breaker opened after {self.api_failure_count} failures")
             
-            logger.error(f"OpenAI API call error: {e}")
+            logger.error(f"LLM API call error: {e}")
             logger.error(f"Error type: {type(e).__name__}")
             # Log more details about the error
             if hasattr(e, 'response'):

@@ -1021,7 +1021,49 @@
       "content": "From the photo, your posture appears to be fairly relaxed, but there are a few adjustments you can make for better ergonomics:\n\n1. **Head Position**: Try to keep your head more centered over your shoulders. It looks like it might be slightly forward, which can strain your neck and shoulders over time.\n2. **Shoulder Alignment**: Ensure your shoulders are relaxed and not hunched. You might want to gently pull them back and down.\n3. **Chair Support**: Make sure your chair provides good lumbar support. If it doesn't, consider using a cushion or adjusting the chair to better support your lower back.\n\nThese small adjustments can help improve your posture and reduce strain. If you're sitting for long periods, remember to take breaks and stretch. If you have any discomfort, it's always a good idea to consult with a healthcare professional.",
       "timestamp": 1749363510.652191,
       "metadata": {}
+    },
+    {
+      "id": "1749383996.935401",
+      "type": "user",
+      "content": "Well, it has like, um, he, he, cause he was making this as a prototype for this company that he's applying for. A friend of mine started. Oh, yeah. Um, it's a wearable, um, it's like vision with audio. Uh, it was made originally for blind people. It came out of like MIT Media Lab. Um, the, the professor, he's made the MIT, he's from MIT Media Lab and then he did it at my institute. Cool. Um, I used to work closely with his PhDs and stuff and then they created this product called AIC and now they're like commercializing. That's such a gay name. I know, I know. That's the gayest name I've ever heard.",
+      "timestamp": 1749383996.9354072,
+      "metadata": {}
+    },
+    {
+      "id": "1749384002.441427",
+      "type": "assistant",
+      "content": "It sounds like you're sharing some interesting details about a wearable technology project with a unique background. The name \"AIC\" might not resonate well with everyone, but it's common for products to go through several naming iterations before finding the right fit. If you",
+      "timestamp": 1749384002.44144,
+      "metadata": {}
+    },
+    {
+      "id": "1749384091.989815",
+      "type": "user",
+      "content": "Like just the ability to see like topics of the conversation come as they're coming. The ability to see suggestions during the conversation. Just to see the impact of and the capability of a model and useful of it.",
+      "timestamp": 1749384091.98982,
+      "metadata": {}
+    },
+    {
+      "id": "1749384094.763346",
+      "type": "assistant",
+      "content": "That",
+      "timestamp": 1749384094.76335,
+      "metadata": {}
+    },
+    {
+      "id": "1749384405.774298",
+      "type": "user",
+      "content": "So what did you mean when you said like because he's using just the Python audio? Yeah, so in Python, because you're running the backend locally, the backend is also connected to your Mac. Or? What do you call it? Mac. Drivers or whatever. Yeah, audio drivers. And then? So it's not exactly a backend. So what would a backend be? So if this was on a separate server, it wouldn't work because they don't have a fucking microphone on the server. Oh, yeah. So how would that server then communicate to my local microphone? It wouldn't. It doesn't do it right now. Okay. Right now it just uses Python. Yeah. Yes. Like how you would actually do it is like you'd probably do it over WebSockets with, Okay. Yeah, with like you have to record the thing and send it over. Yeah. It's painful.",
+      "timestamp": 1749384405.774305,
+      "metadata": {}
+    },
+    {
+      "id": "1749384409.340630",
+      "type": "assistant",
+      "content": "It",
+      "timestamp": 1749384409.340634,
+      "metadata": {}
     }
   ],
-  "last_updated": 1749363510.65348
+  "last_updated": 1749384409.341232
 }
